@@ -7,7 +7,7 @@ android {
 
     defaultConfig {
         applicationId "com.aicodix.rattlegram"
-        minSdk 21
+        minSdk 24
         targetSdk 33
         versionCode 10
         versionName "1.9"
@@ -32,7 +32,8 @@ android {
     externalNativeBuild {
         cmake {
             path file('src/main/cpp/CMakeLists.txt')
-            version '3.18.1'
+            // removed due to version incompatible between OS.
+//            version '3.18.1'
         }
     }
     buildFeatures {
@@ -45,4 +46,5 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.8.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'com.github.mik3y:usb-serial-for-android:3.5.1'
 }

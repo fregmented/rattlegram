@@ -14,12 +14,15 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.hardware.usb.UsbDeviceConnection;
+import android.hardware.usb.UsbManager;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioRecord;
@@ -31,6 +34,7 @@ import android.os.Handler;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -38,11 +42,18 @@ import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.ListView;
 import android.widget.NumberPicker;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 
 import com.aicodix.rattlegram.databinding.ActivityMainBinding;
+import com.hoho.android.usbserial.driver.UsbSerialDriver;
+import com.hoho.android.usbserial.driver.UsbSerialPort;
+import com.hoho.android.usbserial.driver.UsbSerialProber;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -50,6 +61,8 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -63,6 +76,8 @@ public class MainActivity extends AppCompatActivity {
 	private final int sampleSize = 2;
 	private final int spectrumWidth = 360, spectrumHeight = 128;
 	private final int spectrogramWidth = 360, spectrogramHeight = 128;
+
+	private static final String INTENT_ACTION_GRANT_USB = BuildConfig.APPLICATION_ID + ".GRANT_USB";
 	private Bitmap spectrumBitmap, spectrogramBitmap;
 	private int[] spectrumPixels, spectrogramPixels;
 	private ImageView spectrumView, spectrogramView;
@@ -94,6 +109,10 @@ public class MainActivity extends AppCompatActivity {
 	private byte[] stagedCall;
 	private String callSign;
 	private String draftText;
+
+	private UsbManager usbManager = null;
+	private UsbSerialPort usbSerialPort = null;
+	private boolean usbPttModeRts = false;
 
 	private native boolean createEncoder(int sampleRate);
 
@@ -271,6 +290,18 @@ public class MainActivity extends AppCompatActivity {
 
 	private void startListening() {
 		if (audioRecord != null) {
+			// TODO: USB CDC RTS/DTS Trigger
+			if(usbSerialPort != null && usbSerialPort.isOpen()) {
+				try {
+					if (usbPttModeRts) {
+						usbSerialPort.setRTS(false);
+					} else {
+						usbSerialPort.setDTR(false);
+					}
+				} catch (IOException e) {
+					Log.e("USB", "IOE", e);
+				}
+			}
 			audioRecord.startRecording();
 			if (audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
 				audioRecord.read(recordBuffer, 0, recordBuffer.length);
@@ -490,6 +521,8 @@ public class MainActivity extends AppCompatActivity {
 		String message = extractIntent(getIntent());
 		if (message != null)
 			composeMessage(message);
+
+		usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
 	}
 
 	@Override
@@ -880,6 +913,9 @@ public class MainActivity extends AppCompatActivity {
 			System.exit(0);
 			return true;
 		}
+		if(id == R.id.action_edit_usb_ptt) {
+			editUsbDevice();
+		}
 		if (id == R.id.action_privacy_policy) {
 			showTextPage(getString(R.string.privacy_policy), getString(R.string.privacy_policy_text));
 			return true;
@@ -976,6 +1012,18 @@ public class MainActivity extends AppCompatActivity {
 	}
 
 	private void transmitMessage(String message) {
+		// TODO: USB CDC RTS/DTR Trigger
+		if(usbSerialPort != null && usbSerialPort.isOpen()) {
+			try {
+				if (usbPttModeRts) {
+					usbSerialPort.setRTS(true);
+				} else {
+					usbSerialPort.setDTR(true);
+				}
+			} catch (IOException e) {
+				Log.e("USB", "IOE", e);
+			}
+		}
 		stopListening();
 		byte[] mesg = Arrays.copyOf(message.getBytes(StandardCharsets.UTF_8), payload.length);
 		if (message.length() == 0)
@@ -993,6 +1041,7 @@ public class MainActivity extends AppCompatActivity {
 
 	private void repeatMessage() {
 		stopListening();
+		// TODO: USB CDC RTS/DTS Trigger
 		addMessage(new String(stagedCall).trim(), getString(R.string.repeated), new String(payload).trim());
 		configureEncoder(payload, stagedCall, carrierFrequency, noiseSymbols, fancyHeader);
 		for (int i = 0; i < 5; ++i) {
@@ -1063,6 +1112,72 @@ public class MainActivity extends AppCompatActivity {
 		builder.show();
 	}
 
+	private void editUsbDevice() {
+		// TODO: Auto connect onResume, attach
+		View view = getLayoutInflater().inflate(R.layout.usb_device_config, null);
+		AlertDialog.Builder builder = new AlertDialog.Builder(this, R.style.Theme_AlertDialog);
+		if(usbManager == null) {
+			showTextPage(getString(R.string.usb_error), getString(R.string.usb_error_no_manager));
+			return;
+		}
+		List<UsbSerialDriver> availDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager);
+		if(availDrivers.isEmpty()) {
+			showTextPage(getString(R.string.usb_error), getString(R.string.usb_error_no_device));
+			return;
+		}
+		AtomicInteger currentChecked = new AtomicInteger(-1);
+		ArrayAdapter<String> deviceAdapter = new ArrayAdapter<String>(
+				this,
+				android.R.layout.simple_list_item_single_choice,
+				availDrivers.stream().map(i -> {
+					if(usbSerialPort != null && usbSerialPort.getDevice().getDeviceId() == i.getDevice().getDeviceId()) {
+						currentChecked.set(availDrivers.indexOf(i));
+					}
+					Log.e("USB_ENUMERATION", String.format("USB Device(%s / %s) PID: %04X(%d) VID: %04X(%d) DID: %X(%d)",
+							i.getDevice().getDeviceName(),
+							i.getDevice().getProductName(),
+							i.getDevice().getProductId(),
+							i.getDevice().getProductId(),
+							i.getDevice().getVendorId(),
+							i.getDevice().getVendorId(),
+							i.getDevice().getDeviceId(),
+							i.getDevice().getDeviceId()
+					));
+					return i.getDevice().getProductName();
+				}).collect(Collectors.toList())
+		);
+		ListView listView = view.findViewById(R.id.usb_device_list);
+		listView.setAdapter(deviceAdapter);
+		listView.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
+		listView.setItemChecked(currentChecked.get(), true);
+		RadioGroup radioGroup = view.findViewById(R.id.usb_ptt_mode);
+		((RadioButton)view.findViewById(usbPttModeRts ? R.id.usb_ptt_rts : R.id.usb_ptt_dtr)).setChecked(true);
+		((RadioButton)view.findViewById(!usbPttModeRts ? R.id.usb_ptt_rts : R.id.usb_ptt_dtr)).setChecked(false);
+		builder.setTitle(R.string.usb_ptt_title);
+		builder.setView(view);
+		builder.setNegativeButton(R.string.cancel, null);
+		builder.setPositiveButton(R.string.okay, (dialog, which) -> {
+			int checked = listView.getCheckedItemPosition();
+			usbPttModeRts = radioGroup.getCheckedRadioButtonId() == R.id.usb_ptt_rts;
+
+			UsbSerialDriver driver = availDrivers.get(checked);
+			UsbDeviceConnection usbDeviceConnection = usbManager.openDevice(driver.getDevice());
+			if(usbDeviceConnection == null && !usbManager.hasPermission(driver.getDevice())) {
+				int flags = PendingIntent.FLAG_MUTABLE;
+				PendingIntent usbPermissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(INTENT_ACTION_GRANT_USB), flags);
+				usbManager.requestPermission(driver.getDevice(), usbPermissionIntent);
+				return;
+			}
+			usbSerialPort = driver.getPorts().get(0);
+			try {
+				usbSerialPort.open(usbDeviceConnection);
+			} catch (IOException e) {
+				showTextPage(getString(R.string.usb_error), getString(R.string.usb_error_open));
+			}
+		});
+		builder.show();
+	}
+
 	private void showTextPage(String title, String message) {
 		AlertDialog.Builder builder = new AlertDialog.Builder(this, R.style.Theme_AlertDialog);
 		builder.setNeutralButton(R.string.close, null);
@@ -1074,6 +1189,17 @@ public class MainActivity extends AppCompatActivity {
 	@Override
 	protected void onResume() {
 		startListening();
+		// TODO: Trigger RTS/DTR to RX mode
+		if(usbSerialPort != null) {
+			UsbDeviceConnection connection = usbManager.openDevice(usbSerialPort.getDevice());
+			if(connection != null) {
+				try {
+					usbSerialPort.open(connection);
+				} catch (IOException e) {
+					showTextPage(getString(R.string.usb_error), getString(R.string.usb_error_open));
+				}
+			}
+		}
 		super.onResume();
 	}
 
@@ -1081,6 +1207,14 @@ public class MainActivity extends AppCompatActivity {
 	protected void onPause() {
 		stopListening();
 		storeSettings();
+		// TODO: Trigger RTS/DTR to RX mode
+		if(usbSerialPort != null) {
+			try {
+				usbSerialPort.close();
+			} catch (IOException e) {
+				throw new RuntimeException(e);
+			}
+		}
 		super.onPause();
 	}
 

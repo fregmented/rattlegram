@@ -200,6 +200,9 @@
 		android:id="@+id/action_edit_call_sign"
 		android:title="@string/call_sign" />
 	<item
+		android:id="@+id/action_edit_usb_ptt"
+		android:title="@string/usb_ptt_title"/>
+	<item
 		android:id="@+id/action_privacy_policy"
 		android:title="@string/privacy_policy" />
 	<item

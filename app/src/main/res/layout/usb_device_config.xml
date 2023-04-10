@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:gravity="center">
+
+    <ListView
+        android:id="@+id/usb_device_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/usb_ptt_mode"/>
+    <RadioGroup
+        android:id="@+id/usb_ptt_mode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:layout_constraintBottom_toBottomOf="parent">
+        <RadioButton
+            android:layout_weight="1"
+            android:text="@string/usb_ptt_rts"
+            android:id="@+id/usb_ptt_rts"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+        <RadioButton
+            android:layout_weight="1"
+            android:text="@string/usb_ptt_dtr"
+            android:id="@+id/usb_ptt_dtr"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </RadioGroup>
+</androidx.constraintlayout.widget.ConstraintLayout>
